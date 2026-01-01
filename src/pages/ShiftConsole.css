@@ -1,0 +1,89 @@
+.search-input::placeholder {
+    color: hsla(0, 0%, 100%, .4);
+}
+
+.action-btn {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 1.5rem 1rem;
+    border-radius: 12px;
+    font-weight: 700;
+    font-size: 0.8rem;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.action-btn:hover:not(:disabled) {
+    transform: translateY(-2px);
+    filter: brightness(1.2);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+}
+
+.action-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+}
+
+.modal-input {
+    background: var(--color-bg);
+    border: 1px solid var(--border-color);
+    color: white;
+    padding: 0.75rem 1rem;
+    border-radius: 8px;
+    outline: none;
+    width: 100%;
+}
+
+.modal-input:focus {
+    border-color: var(--color-primary);
+}
+
+.confirm-btn {
+    background: var(--color-primary);
+    color: var(--color-bg);
+    font-weight: bold;
+    padding: 0.5rem 1.5rem;
+    border-radius: 6px;
+    cursor: pointer;
+}
+
+.confirm-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.type-tag {
+    font-size: 0.65rem;
+    font-weight: bold;
+    padding: 0.2rem 0.5rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+
+.type-attendance_in {
+    background: rgba(34, 197, 94, 0.15);
+    color: #4ade80;
+}
+
+.type-attendance_out {
+    background: rgba(239, 68, 68, 0.15);
+    color: #f87171;
+}
+
+.type-cash_advance {
+    background: rgba(56, 189, 248, 0.15);
+    color: #7dd3fc;
+}
+
+.type-shift_note {
+    background: rgba(148, 163, 184, 0.15);
+    color: #cbd5e1;
+}
+
+.type-shift_absence {
+    background: rgba(245, 158, 11, 0.15);
+    color: #fbbf24;
+}

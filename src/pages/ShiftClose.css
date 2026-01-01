@@ -1,0 +1,178 @@
+.close-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  padding-bottom: 1.25rem;
+  gap: 1rem;
+}
+
+.summary-stat {
+  background: var(--color-surface);
+  border: 1px solid var(--border-color);
+  padding: 1.25rem;
+  border-radius: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.summary-stat-label {
+  font-size: 0.75rem;
+  color: var(--color-text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.summary-stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--color-primary);
+}
+
+.summary-list {
+  background: var(--color-surface);
+  border: 1px solid var(--border-color);
+  border-radius: 12px;
+  overflow: hidden;
+}
+
+.summary-list-header {
+  padding: 1rem 1.25rem;
+  border-bottom: 1px solid var(--border-color);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.summary-item {
+  padding: 0.75rem 1.25rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.summary-item:last-child {
+  border-bottom: none;
+}
+
+.close-actions {
+  display: flex;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.btn-primary {
+  background: var(--color-primary);
+  color: var(--color-bg);
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 700;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid var(--border-color);
+  color: white;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  cursor: pointer;
+}
+
+.btn-primary:disabled,
+.btn-secondary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+/* ==============================
+   PRINTING (sin tocar UI)
+   ============================== */
+
+/* En pantalla NO se muestra el ticket */
+.printable-ticket {
+  display: none;
+}
+
+/* ✅ UN SOLO @media print (robusto) */
+@media print {
+  /* 1) Fondo blanco general */
+  html,
+  body {
+    margin: 0 !important;
+    padding: 0 !important;
+    background: #fff !important;
+    color: #000 !important;
+    -webkit-print-color-adjust: exact;
+    print-color-adjust: exact;
+  }
+
+  /* 2) Ocultar la UI normal */
+  .no-print {
+    display: none !important;
+  }
+
+  /* 3) A prueba de CSS global: ocultar todo */
+  body * {
+    visibility: hidden !important;
+  }
+
+  /* 4) Mostrar SOLO el ticket */
+  .printable-ticket,
+  .printable-ticket * {
+    visibility: visible !important;
+  }
+
+  /* 5) Forzar el ticket arriba de todo y visible */
+  .printable-ticket {
+    display: block !important;
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+
+    width: 80mm;
+    padding: 8px;
+
+    background: #fff !important;
+    color: #000 !important;
+
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas,
+      "Liberation Mono", "Courier New", monospace;
+    font-size: 12px;
+    line-height: 1.2;
+  }
+
+  /* 6) Todo negro sobre blanco */
+  .printable-ticket * {
+    color: #000 !important;
+    background: transparent !important;
+  }
+
+  .printable-ticket hr {
+    border: none;
+    border-top: 1px dashed #000;
+    margin: 8px 0;
+  }
+
+  /* 7) Tamaño ticket térmico */
+  @page {
+    size: 80mm auto;
+    margin: 0;
+  }
+}

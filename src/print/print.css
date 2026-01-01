@@ -1,0 +1,47 @@
+@media print {
+    @page {
+        size: 80mm auto;
+        margin: 0;
+    }
+
+    body {
+        width: 72mm;
+        /* 80mm - margins approx */
+        background-color: white;
+        color: black;
+        font-family: 'Courier New', Courier, monospace;
+        /* Monospace for thermal printers */
+        font-size: 12px;
+    }
+
+    /* Hide everything by default */
+    .no-print,
+    #root>*:not(.printable-ticket-wrapper),
+    nav,
+    footer,
+    button {
+        display: none !important;
+    }
+
+    /* Only show the ticket */
+    .printable-ticket {
+        display: block !important;
+        width: 100%;
+        padding: 2mm;
+        page-break-inside: avoid;
+    }
+
+    .printable-ticket * {
+        color: black !important;
+        background: transparent !important;
+        box-shadow: none !important;
+        text-shadow: none !important;
+    }
+}
+
+/* On screen styles for the ticket preview if needed, or fallback view */
+.printable-ticket {
+    background: white;
+    color: black;
+    font-family: 'Courier New', Courier, monospace;
+}
