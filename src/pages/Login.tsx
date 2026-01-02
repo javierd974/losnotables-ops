@@ -50,7 +50,7 @@ export default function Login() {
       setAuth(data.access_token, data.user);
 
       // Siempre pasamos por select-local (tu flujo), aunque “from” exista
-      nav("/select-local", { replace: true });
+      nav(from, { replace: true });
     } catch (err: any) {
       if (err instanceof ApiError) {
         if (err.status === 401) setError("Credenciales incorrectas.");
