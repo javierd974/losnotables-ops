@@ -16,50 +16,14 @@ import { ShiftClose } from "./pages/ShiftClose";
 import { SelectLocal } from "./pages/SelectLocal";
 import { OpenShift } from "./pages/OpenShift";
 
+import Login from "./pages/Login";
+
+// ✅ Nuevo auth real (JWT en localStorage)
+import { isAuthed } from "./auth/auth";
+import { AuthGuard as JwtAuthGuard, LoginRedirectIfAuthed } from "./auth/AuthGuard";
+
 import "./App.css";
 import "./print/print.css";
-
-/* =========================
-   Auth simple (demo / MVP)
-   ========================= */
-const AUTH_KEY = "ops_auth";
-
-const isAuthed = () => {
-  try {
-    return localStorage.getItem(AUTH_KEY) === "1";
-  } catch {
-    return false;
-  }
-};
-
-const Login = () => (
-  <div style={{ padding: 24, textAlign: "center" }}>
-    <h1 style={{ fontSize: 24, fontWeight: 800 }}>Login</h1>
-    <p style={{ opacity: 0.6, marginTop: 12 }}>
-      Demo Access: No Auth Required
-    </p>
-
-    <div style={{ marginTop: 18 }}>
-      <button
-        onClick={() => {
-          localStorage.setItem(AUTH_KEY, "1");
-          window.location.replace("/");
-        }}
-        style={{
-          padding: "10px 14px",
-          borderRadius: 10,
-          border: "1px solid rgba(255,255,255,.15)",
-          background: "rgba(255,255,255,.06)",
-          color: "white",
-          cursor: "pointer",
-          fontWeight: 700,
-        }}
-      >
-        Entrar (demo)
-      </button>
-    </div>
-  </div>
-);
 
 /* =========================
    Print
@@ -92,13 +56,7 @@ const RootGate = () => {
   return <Navigate to="/select-local" replace />;
 };
 
-// Protege rutas privadas por login
-const AuthGuard = () => {
-  if (!isAuthed()) return <Navigate to="/login" replace />;
-  return <Outlet />;
-};
-
-// Verifica turno abierto
+// Verifica turno abierto (se mantiene igual)
 const ShiftGuard = () => {
   const activeShift = useLiveQuery(() =>
     db.shift_meta.where("status").equals("OPEN").first()
@@ -112,7 +70,7 @@ const ShiftGuard = () => {
   return <Outlet />;
 };
 
-// Layout privado
+// Layout privado (se mantiene igual)
 const OpsShell = () => (
   <Layout>
     <Outlet />
@@ -127,19 +85,29 @@ export default function App() {
     <Router>
       <Routes>
         {/* Public */}
-        <Route path="/login" element={<Login />} />
-        <Route path="/select-local" element={<SelectLocal />} />
-        <Route path="/open-shift/:localId" element={<OpenShift />} />
-        <Route path="/consultas/vales" element={<ValesConsulta />} />
+        <Route
+          path="/login"
+          element={
+            <LoginRedirectIfAuthed>
+              <Login />
+            </LoginRedirectIfAuthed>
+          }
+        />
 
-        {/* Print */}
+        {/* Print (público, útil incluso offline) */}
         <Route path="/print/shift/:id" element={<PrintFallback />} />
 
         {/* Root */}
         <Route path="/" element={<RootGate />} />
 
-        {/* Private */}
-        <Route element={<AuthGuard />}>
+        {/* Private (JWT) */}
+        <Route element={<JwtAuthGuard />}>
+          {/* Estas rutas antes eran públicas, ahora quedan protegidas */}
+          <Route path="/select-local" element={<SelectLocal />} />
+          <Route path="/open-shift/:localId" element={<OpenShift />} />
+          <Route path="/consultas/vales" element={<ValesConsulta />} />
+
+          {/* Turno abierto requerido */}
           <Route element={<ShiftGuard />}>
             <Route element={<OpsShell />}>
               <Route path="/shift" element={<ShiftConsole />} />
