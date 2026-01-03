@@ -39,7 +39,7 @@ export async function apiFetch<T>(
     if (token) headers.set("Authorization", `Bearer ${token}`);
   }
 
-  const res = await fetch(url, { ...options, headers });
+  const res = await fetch(url, { ...options, headers, cache: "no-store" });
 
   // Si el token expiró o no es válido, limpiamos auth (evita loops raros)
   if (res.status === 401) {
