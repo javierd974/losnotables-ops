@@ -18,9 +18,8 @@ import { OpenShift } from "./pages/OpenShift";
 
 import Login from "./pages/Login";
 
-// ✅ Nuevo auth real (JWT en localStorage)
-import { isAuthed } from "./auth/auth";
-import { AuthGuard as JwtAuthGuard, LoginRedirectIfAuthed } from "./auth/AuthGuard";
+// ✅ auth real
+import { AuthGuard as JwtAuthGuard } from "./auth/AuthGuard";
 
 import "./App.css";
 import "./print/print.css";
@@ -50,13 +49,10 @@ const PrintFallback = () => {
    Guards
    ========================= */
 
-// Decide qué hacer al entrar a "/"
-const RootGate = () => {
-  if (!isAuthed()) return <Navigate to="/login" replace />;
-  return <Navigate to="/select-local" replace />;
-};
+// ✅ Siempre arrancar en /login
+const RootGate = () => <Navigate to="/login" replace />;
 
-// Verifica turno abierto (se mantiene igual)
+// Verifica turno abierto
 const ShiftGuard = () => {
   const activeShift = useLiveQuery(() =>
     db.shift_meta.where("status").equals("OPEN").first()
@@ -70,7 +66,7 @@ const ShiftGuard = () => {
   return <Outlet />;
 };
 
-// Layout privado (se mantiene igual)
+// Layout privado
 const OpsShell = () => (
   <Layout>
     <Outlet />
@@ -85,16 +81,9 @@ export default function App() {
     <Router>
       <Routes>
         {/* Public */}
-        <Route
-          path="/login"
-          element={
-            <LoginRedirectIfAuthed>
-              <Login />
-            </LoginRedirectIfAuthed>
-          }
-        />
+        <Route path="/login" element={<Login />} />
 
-        {/* Print (público, útil incluso offline) */}
+        {/* Print (público) */}
         <Route path="/print/shift/:id" element={<PrintFallback />} />
 
         {/* Root */}
@@ -102,12 +91,10 @@ export default function App() {
 
         {/* Private (JWT) */}
         <Route element={<JwtAuthGuard />}>
-          {/* Estas rutas antes eran públicas, ahora quedan protegidas */}
           <Route path="/select-local" element={<SelectLocal />} />
           <Route path="/open-shift/:localId" element={<OpenShift />} />
           <Route path="/consultas/vales" element={<ValesConsulta />} />
 
-          {/* Turno abierto requerido */}
           <Route element={<ShiftGuard />}>
             <Route element={<OpsShell />}>
               <Route path="/shift" element={<ShiftConsole />} />
