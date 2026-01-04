@@ -31,8 +31,11 @@ export const OpenShift: React.FC = () => {
         setError(null);
         try {
             if (!localId) throw new Error("ID de local no válido");
+            localStorage.setItem("ops_local_id", localId);
+
             await openShift(localId, localName, cycle);
-            navigate('/');
+            
+            navigate('/shift', { replace: true });
         } catch (err: any) {
             setError(err.message || 'Error al abrir el turno');
         } finally {

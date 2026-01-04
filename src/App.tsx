@@ -58,13 +58,21 @@ const ShiftGuard = () => {
     db.shift_meta.where("status").equals("OPEN").first()
   );
 
+  const localId = localStorage.getItem("ops_local_id");
+
   if (activeShift === undefined)
     return <div style={{ padding: 24, color: "white" }}>Cargando...</div>;
 
-  if (!activeShift) return <Navigate to="/select-local" replace />;
+  // ✅ Si hay turno abierto, ok
+  if (activeShift) return <Outlet />;
 
-  return <Outlet />;
+  // ✅ No hay turno: si no hay local, seleccionar local
+  if (!localId) return <Navigate to="/select-local" replace />;
+
+  // ✅ No hay turno pero sí local: abrir turno para ese local
+  return <Navigate to={`/open-shift/${localId}`} replace />;
 };
+
 
 // Layout privado
 const OpsShell = () => (
