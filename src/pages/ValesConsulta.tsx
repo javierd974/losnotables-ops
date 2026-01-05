@@ -1,7 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type ShiftEvent } from '../offline/db';
-import { MOCK_STAFF, type StaffMember } from '../offline/staffMocks';
+import { db, type ShiftEvent, type StaffMember } from '../offline/db';
 import { ArrowLeft, DollarSign, Search } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 
@@ -19,11 +18,34 @@ export const ValesConsulta: React.FC = () => {
   const [fromDate, setFromDate] = useState('');
   const [toDate, setToDate] = useState('');
 
+  // Local actual (para acotar búsqueda)
+  const localId = localStorage.getItem('ops_local_id') || '';
+
+  // Staff real (cache offline Dexie)
+  const staff = useLiveQuery(async () => {
+    if (!localId) return [] as StaffMember[];
+    const rows = await db.staff.where('local_id').equals(localId).toArray();
+    return rows
+      .filter(r => r.is_active)
+      .sort((a, b) => a.full_name.localeCompare(b.full_name));
+  }, [localId]);
+
+  // Si el empleado seleccionado ya no está disponible (cambio de local / refresh), limpiamos
+  useEffect(() => {
+    if (!employee) return;
+    if (!staff) return;
+    const ok = staff.some(s => s.id === employee.id);
+    if (!ok) setEmployee(null);
+  }, [staff, employee]);
+
   const filteredStaff = useMemo(() => {
     const term = q.trim().toLowerCase();
     if (!term) return [];
-    return MOCK_STAFF.filter(s => s.name.toLowerCase().includes(term)).slice(0, 20);
-  }, [q]);
+    if (!staff) return [];
+    return staff
+      .filter(s => s.full_name.toLowerCase().includes(term))
+      .slice(0, 20);
+  }, [q, staff]);
 
   const vales = useLiveQuery(async () => {
     if (!employee?.id) return [] as ShiftEvent[];
@@ -67,6 +89,14 @@ export const ValesConsulta: React.FC = () => {
         </h2>
       </header>
 
+      {!localId && (
+        <section className="panel-card">
+          <div style={{ color: 'var(--color-text-muted)' }}>
+            No hay local seleccionado. Volvé y elegí un local para consultar vales.
+          </div>
+        </section>
+      )}
+
       {/* Selector empleado */}
       <section className="panel-card">
         {!employee ? (
@@ -86,7 +116,8 @@ export const ValesConsulta: React.FC = () => {
               <input
                 value={q}
                 onChange={(e) => setQ(e.target.value)}
-                placeholder="Buscar empleado..."
+                placeholder={staff === undefined ? 'Cargando personal…' : 'Buscar empleado...'}
+                disabled={!localId || staff === undefined}
                 style={{
                   flex: 1,
                   border: 'none',
@@ -123,12 +154,18 @@ export const ValesConsulta: React.FC = () => {
                       borderBottom: '1px solid rgba(255,255,255,.05)'
                     }}
                   >
-                    <div style={{ fontWeight: 700 }}>{s.name}</div>
+                    <div style={{ fontWeight: 700 }}>{s.full_name}</div>
                     <div style={{ fontSize: 12, color: 'var(--color-text-muted)' }}>
-                      {s.role}
+                      {s.blacklisted ? 'LISTA NEGRA' : (s.doc ?? '')}
                     </div>
                   </div>
                 ))}
+              </div>
+            )}
+
+            {staff !== undefined && localId && staff.length === 0 && (
+              <div style={{ marginTop: 12, fontSize: 12, color: 'var(--color-text-muted)' }}>
+                No hay personal asignado a este local.
               </div>
             )}
           </div>
@@ -144,7 +181,7 @@ export const ValesConsulta: React.FC = () => {
               >
                 Empleado
               </div>
-              <div style={{ fontSize: 18, fontWeight: 800 }}>{employee.name}</div>
+              <div style={{ fontSize: 18, fontWeight: 800 }}>{employee.full_name}</div>
             </div>
             <button className="btn-secondary" onClick={() => setEmployee(null)}>
               Cambiar
@@ -167,6 +204,7 @@ export const ValesConsulta: React.FC = () => {
             value={fromDate}
             onChange={(e) => setFromDate(e.target.value)}
             className="modal-input"
+            disabled={!employee}
           />
         </div>
         <div>
@@ -178,6 +216,7 @@ export const ValesConsulta: React.FC = () => {
             value={toDate}
             onChange={(e) => setToDate(e.target.value)}
             className="modal-input"
+            disabled={!employee}
           />
         </div>
       </section>
