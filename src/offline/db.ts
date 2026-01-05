@@ -36,6 +36,19 @@ export interface StaffSnapshot {
   staff_data: any;
 }
 
+export interface StaffMember {
+  id: string;              // employee_id (uuid)
+  local_id: string;        // para filtrar por local
+  full_name: string;
+  doc?: string;
+  cuil?: string;
+  blacklisted?: boolean;
+
+  // housekeeping offline
+  is_active: boolean;      // para soft-deactivate si cambia asignación
+  updated_at: string;      // ISO
+}
+
 /* =========================================================
    EVENTOS DE TURNO (CORE DEL SISTEMA)
    ========================================================= */
@@ -112,13 +125,15 @@ export class OpsDatabase extends Dexie {
   outbox!: Table<OutboxItem>;
   shift_meta!: Table<ShiftMeta>;
   staff_snapshot!: Table<StaffSnapshot>;
+  staff!: Table<StaffMember>;
   events!: Table<ShiftEvent>;
   hr_notices!: Table<HrNotice>;
+
 
   constructor() {
     super('LosNotablesOpsDB');
 
-    this.version(10).stores({
+    this.version(11).stores({
       // Cola offline
       outbox: '++id, status, created_at, client_event_id, shift_id',
 
@@ -135,6 +150,20 @@ export class OpsDatabase extends Dexie {
       // Snapshot de staff por turno
       staff_snapshot: '++id, shift_id',
 
+      // Catálogo de personal por local (cache offline)
+      // Índices:
+      // - local_id => listar personal del local
+      // - [local_id+is_active] => filtrar activos rápido
+      staff: `
+        id,
+        local_id,
+        full_name,
+        is_active,
+        updated_at,
+        [local_id+is_active]
+      `,
+
+      
       // Eventos operativos
       // Índices:
       // - [shift_id+event_at] => últimos eventos del turno

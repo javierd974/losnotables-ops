@@ -1,9 +1,8 @@
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import Dexie from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { db, type ShiftEvent } from '../offline/db';
+import { db, type ShiftEvent, type StaffMember } from '../offline/db';
 import { outboxManager } from '../offline/outbox';
-import { MOCK_STAFF, type StaffMember } from '../offline/staffMocks';
 import { CASH_ADVANCE_REASONS } from '../offline/cashAdvanceReasonsMock';
 import { SidePanelContext } from '../ui/Layout';
 import './ShiftConsole.css';
@@ -15,6 +14,7 @@ import {
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '../ui/toast/ToastContext';
+import { apiFetch } from '../api/client';
 
 const APP_VERSION = '1.0.0-mvp';
 const DEBUG_MODE = import.meta.env.DEV;
@@ -65,6 +65,14 @@ function validateAttendanceBusinessRule(
   return null;
 }
 
+type StaffApiRow = {
+  id: string;
+  full_name: string;
+  doc?: string | null;
+  cuil?: string | null;
+  blacklisted?: boolean | null;
+};
+
 export const ShiftConsole: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
@@ -87,11 +95,79 @@ export const ShiftConsole: React.FC = () => {
   );
   const shiftId = activeShift?.id || '';
 
+  // ─────────────────────────────────────────────────────────────
+  // STAFF (real DB) — cache offline en Dexie
+  // ─────────────────────────────────────────────────────────────
+  const localId = activeShift?.local_id || localStorage.getItem('ops_local_id') || '';
+
+  // Leer personal del local desde cache (offline)
+  const staff = useLiveQuery(async () => {
+    if (!localId) return [] as StaffMember[];
+    const rows = await db.staff.where('local_id').equals(localId).toArray();
+    return rows.filter(r => r.is_active).sort((a, b) => a.full_name.localeCompare(b.full_name));
+  }, [localId]);
+
+  // Si cambia el local/turno y el empleado seleccionado ya no está, lo limpiamos
+  useEffect(() => {
+    if (!selectedStaff) return;
+    if (!staff) return;
+    const stillThere = staff.some(s => s.id === selectedStaff.id);
+    if (!stillThere) setSelectedStaff(null);
+  }, [staff, selectedStaff]);
+
+  // Sync: traer personal real del backend y guardar en Dexie
+  useEffect(() => {
+    let alive = true;
+
+    const syncStaff = async () => {
+      if (!localId) return;
+
+      try {
+        const rows = await apiFetch<StaffApiRow[]>(`/staff/by-local/${localId}`);
+        if (!alive) return;
+
+        const now = new Date().toISOString();
+
+        const mapped: StaffMember[] = rows.map(r => ({
+          id: r.id,
+          local_id: localId,
+          full_name: r.full_name,
+          doc: r.doc ?? undefined,
+          cuil: r.cuil ?? undefined,
+          blacklisted: Boolean(r.blacklisted),
+          is_active: true,
+          updated_at: now,
+        }));
+
+        await db.transaction('rw', db.staff, async () => {
+          // Traigo lo existente del local para desactivar los que ya no vienen
+          const existing = await db.staff.where('local_id').equals(localId).toArray();
+          const incomingIds = new Set(mapped.map(x => x.id));
+
+          const toDeactivate = existing
+            .filter(x => x.is_active && !incomingIds.has(x.id))
+            .map(x => ({ ...x, is_active: false, updated_at: now }));
+
+          if (toDeactivate.length) await db.staff.bulkPut(toDeactivate);
+          if (mapped.length) await db.staff.bulkPut(mapped);
+        });
+
+        if (DEBUG_MODE) console.debug('[OPS] staff synced', { localId, count: mapped.length });
+      } catch (err: any) {
+        // Si está offline o falla, seguimos con cache local (no frenamos operación)
+        if (DEBUG_MODE) console.warn('[OPS] staff sync failed (offline?)', err);
+      }
+    };
+
+    void syncStaff();
+
+    return () => { alive = false; };
+  }, [localId]);
+
   // ✅ Novedades RRHH por Local + Fecha (independiente del turno)
   const hrNotices = useLiveQuery(async () => {
     if (!activeShift?.local_id || !activeShift?.work_date) return [];
 
-    // Requiere índice compuesto [local_id+work_date] en hr_notices
     return db.hr_notices
       .where('[local_id+work_date]')
       .equals([activeShift.local_id, activeShift.work_date])
@@ -115,10 +191,13 @@ export const ShiftConsole: React.FC = () => {
 
   const filteredStaff = useMemo(() => {
     if (!searchTerm) return [];
-    return MOCK_STAFF.filter(s =>
-      s.name.toLowerCase().includes(searchTerm.toLowerCase())
-    );
-  }, [searchTerm]);
+    if (!staff) return [];
+    const q = searchTerm.toLowerCase().trim();
+    if (!q) return [];
+    return staff
+      .filter(s => s.full_name.toLowerCase().includes(q))
+      .slice(0, 30);
+  }, [searchTerm, staff]);
 
   const stats = useMemo(() => {
     if (!shiftId || events === undefined) return { in: 0, out: 0, vales: 0 };
@@ -149,6 +228,12 @@ export const ShiftConsole: React.FC = () => {
       return;
     }
 
+    // Bloqueo lista negra (si querés permitirlo, quitá esto)
+    if (selectedStaff.blacklisted) {
+      push({ type: 'warning', title: 'Empleado', message: 'El empleado está en lista negra.' });
+      return;
+    }
+
     setIsSubmitting(true);
 
     const clientEventId = uuidv4();
@@ -158,7 +243,7 @@ export const ShiftConsole: React.FC = () => {
       client_event_id: clientEventId,
       shift_id: activeShift.id,
       employee_id: selectedStaff.id,
-      employee_name: selectedStaff.name,
+      employee_name: selectedStaff.full_name,
       local_id: activeShift.local_id,
       type,
       event_at: now,
@@ -273,8 +358,8 @@ export const ShiftConsole: React.FC = () => {
                       n.severity === 'URGENT'
                         ? 'rgba(239,68,68,0.15)'
                         : n.severity === 'WARN'
-                        ? 'rgba(245,158,11,0.15)'
-                        : 'rgba(255,255,255,0.05)',
+                          ? 'rgba(245,158,11,0.15)'
+                          : 'rgba(255,255,255,0.05)',
                     border: '1px solid var(--border-color)'
                   }}
                 >
@@ -373,11 +458,12 @@ export const ShiftConsole: React.FC = () => {
               <Search size={20} className="text-slate-400" />
               <input
                 type="text"
-                placeholder="Buscar empleado por nombre..."
+                placeholder={staff === undefined ? "Cargando personal..." : "Buscar empleado por nombre..."}
                 className="search-input"
                 style={{ background: 'transparent', border: 'none', color: 'white', outline: 'none', width: '100%', fontSize: '1rem' }}
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
+                disabled={staff === undefined}
               />
             </div>
 
@@ -410,10 +496,22 @@ export const ShiftConsole: React.FC = () => {
                     onClick={() => { setSelectedStaff(s); setSearchTerm(''); }}
                   >
                     <User size={16} />
-                    <span>{s.name}</span>
-                    <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{s.role}</span>
+                    <span>{s.full_name}</span>
+                    {s.blacklisted ? (
+                      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#f87171' }}>LISTA NEGRA</span>
+                    ) : (
+                      <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                        {s.doc ?? ''}
+                      </span>
+                    )}
                   </div>
                 ))}
+              </div>
+            )}
+
+            {staff !== undefined && staff.length === 0 && (
+              <div style={{ marginTop: '0.75rem', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
+                No hay personal asignado a este local.
               </div>
             )}
           </div>
@@ -425,7 +523,7 @@ export const ShiftConsole: React.FC = () => {
               </div>
               <div>
                 <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', textTransform: 'uppercase' }}>Empleado Seleccionado</div>
-                <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{selectedStaff.name}</div>
+                <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{selectedStaff.full_name}</div>
               </div>
             </div>
             <button
