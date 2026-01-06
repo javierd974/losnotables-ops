@@ -1,16 +1,15 @@
-// src/pages/ShiftConsole.tsx (o donde esté ubicado ShiftConsole.tsx)
-import React, { useState, useMemo, useEffect, useContext } from 'react';
+// src/pages/ShiftConsole.tsx
+import React, { useState, useMemo, useEffect } from 'react';
 import Dexie from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ShiftEvent, type StaffMember } from '../offline/db';
 import { outboxManager } from '../offline/outbox';
 import { CASH_ADVANCE_REASONS as CASH_ADVANCE_REASONS_MOCK } from '../offline/cashAdvanceReasonsMock';
-import { SidePanelContext } from '../ui/Layout';
 import './ShiftConsole.css';
 import { validateEvent, type OpsEventPayload } from '../contracts/ops-events.v1';
 import {
   Search, User, X, LogIn, LogOut, FileText,
-  DollarSign, UserMinus, Clock, CheckCircle, AlertCircle,
+  DollarSign, UserMinus, CheckCircle, AlertCircle,
   History as LucideHistory
 } from 'lucide-react';
 import { v4 as uuidv4 } from 'uuid';
@@ -81,6 +80,18 @@ type CashAdvanceReason = {
   payroll_effect: 'DEDUCT' | 'INFO';
 };
 
+// Helper: map StaffApiRow -> StaffMember (para cache y selección)
+const mapStaffRowToMember = (r: StaffApiRow, localId: string, nowISO: string): StaffMember => ({
+  id: r.id,
+  local_id: localId,
+  full_name: r.full_name,
+  doc: r.doc ?? undefined,
+  cuil: r.cuil ?? undefined,
+  blacklisted: Boolean(r.blacklisted),
+  is_active: true,
+  updated_at: nowISO,
+});
+
 export const ShiftConsole: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
@@ -98,6 +109,10 @@ export const ShiftConsole: React.FC = () => {
   // ✅ Catálogo real (API) de motivos de vales
   const [cashReasons, setCashReasons] = useState<CashAdvanceReason[]>([]);
   const [cashReasonsLoading, setCashReasonsLoading] = useState(false);
+
+  // ✅ Búsqueda global de personal (empresa completa) para “personal de apoyo”
+  const [globalStaff, setGlobalStaff] = useState<StaffMember[]>([]);
+  const [globalStaffLoading, setGlobalStaffLoading] = useState(false);
 
   const deviceId = useMemo(() => getOrCreateDeviceId(), []);
 
@@ -139,17 +154,7 @@ export const ShiftConsole: React.FC = () => {
         if (!alive) return;
 
         const now = new Date().toISOString();
-
-        const mapped: StaffMember[] = rows.map(r => ({
-          id: r.id,
-          local_id: localId,
-          full_name: r.full_name,
-          doc: r.doc ?? undefined,
-          cuil: r.cuil ?? undefined,
-          blacklisted: Boolean(r.blacklisted),
-          is_active: true,
-          updated_at: now,
-        }));
+        const mapped: StaffMember[] = rows.map(r => mapStaffRowToMember(r, localId, now));
 
         await db.transaction('rw', db.staff, async () => {
           // Traigo lo existente del local para desactivar los que ya no vienen
@@ -166,15 +171,50 @@ export const ShiftConsole: React.FC = () => {
 
         if (DEBUG_MODE) console.debug('[OPS] staff synced', { localId, count: mapped.length });
       } catch (err: any) {
-        // Si está offline o falla, seguimos con cache local (no frenamos operación)
         if (DEBUG_MODE) console.warn('[OPS] staff sync failed (offline?)', err);
       }
     };
 
     void syncStaff();
-
     return () => { alive = false; };
   }, [localId]);
+
+  // ✅ Búsqueda global: permite encontrar empleados fuera del local (personal de apoyo)
+  // Requiere endpoint: GET /staff/search?q=texto
+  useEffect(() => {
+    let alive = true;
+    const q = searchTerm.toLowerCase().trim();
+
+    if (!q || q.length < 3) {
+      setGlobalStaff([]);
+      setGlobalStaffLoading(false);
+      return;
+    }
+
+    const t = window.setTimeout(async () => {
+      try {
+        setGlobalStaffLoading(true);
+        const rows = await apiFetch<StaffApiRow[]>(`/staff/search?q=${encodeURIComponent(q)}`);
+        if (!alive) return;
+
+        const now = new Date().toISOString();
+        const mapped: StaffMember[] = rows.map(r => mapStaffRowToMember(r, localId || 'GLOBAL', now));
+        setGlobalStaff(mapped);
+      } catch (err: any) {
+        if (!alive) return;
+        setGlobalStaff([]);
+        if (DEBUG_MODE) console.warn('[OPS] global staff search failed (offline?)', err);
+      } finally {
+        if (!alive) return;
+        setGlobalStaffLoading(false);
+      }
+    }, 300);
+
+    return () => {
+      alive = false;
+      window.clearTimeout(t);
+    };
+  }, [searchTerm, localId]);
 
   // ✅ Catálogo: motivos de vales (API real en PROD, fallback a mock solo en DEV)
   useEffect(() => {
@@ -209,19 +249,8 @@ export const ShiftConsole: React.FC = () => {
     };
 
     void loadCashReasons();
-
     return () => { alive = false; };
   }, [push]);
-
-  // ✅ Novedades RRHH por Local + Fecha (independiente del turno)
-  const hrNotices = useLiveQuery(async () => {
-    if (!activeShift?.local_id || !activeShift?.work_date) return [];
-
-    return db.hr_notices
-      .where('[local_id+work_date]')
-      .equals([activeShift.local_id, activeShift.work_date])
-      .sortBy('created_at');
-  }, [activeShift?.local_id, activeShift?.work_date]);
 
   // Eventos del turno (últimos 20) – orden real por event_at
   const events = useLiveQuery(
@@ -248,14 +277,23 @@ export const ShiftConsole: React.FC = () => {
       .slice(0, 30);
   }, [searchTerm, staff]);
 
-  const stats = useMemo(() => {
+  // Global visible (sin duplicar los que ya están en el local)
+  const globalFiltered = useMemo(() => {
+    if (!searchTerm) return [];
+    const localIds = new Set((filteredStaff ?? []).map(s => s.id));
+    return (globalStaff ?? [])
+      .filter(s => !localIds.has(s.id))
+      .slice(0, 30);
+  }, [globalStaff, filteredStaff, searchTerm]);
+
+  /*const stats = useMemo(() => {
     if (!shiftId || events === undefined) return { in: 0, out: 0, vales: 0 };
     return {
       in: events.filter(e => e.type === 'ATTENDANCE_IN').length,
       out: events.filter(e => e.type === 'ATTENDANCE_OUT').length,
       vales: events.filter(e => e.type === 'CASH_ADVANCE').length,
     };
-  }, [shiftId, events]);
+  }, [shiftId, events]);*/
 
   const resetAfterSuccess = () => {
     setSearchTerm('');
@@ -277,7 +315,6 @@ export const ShiftConsole: React.FC = () => {
       return;
     }
 
-    // Bloqueo lista negra (si querés permitirlo, quitá esto)
     if (selectedStaff.blacklisted) {
       push({ type: 'warning', title: 'Empleado', message: 'El empleado está en lista negra.' });
       return;
@@ -310,7 +347,6 @@ export const ShiftConsole: React.FC = () => {
     }
 
     try {
-      // Reglas de negocio (asistencia)
       if (type === 'ATTENDANCE_IN' || type === 'ATTENDANCE_OUT') {
         const last = await getLastAttendanceEvent(activeShift.id, selectedStaff.id);
         const businessError = validateAttendanceBusinessRule(type, last);
@@ -346,7 +382,7 @@ export const ShiftConsole: React.FC = () => {
       resetAfterSuccess();
 
       void outboxManager.flush().catch((err: any) => {
-        if (DEBUG_MODE) console.warn('[OPS] flush failed (expected if backend 404)', err);
+        if (DEBUG_MODE) console.warn('[OPS] flush failed', err);
       });
 
     } catch (err: any) {
@@ -356,83 +392,6 @@ export const ShiftConsole: React.FC = () => {
       setIsSubmitting(false);
     }
   };
-
-  // ─────────────────────────────────────────────────────────────
-  // Side panel (derecha): Resumen + Estado + RRHH
-  // ─────────────────────────────────────────────────────────────
-  const renderSidePanel = useMemo(() => (
-    <>
-      <div className="panel-card">
-        <h3 className="panel-card-title"><Clock size={16} /> Resumen del turno</h3>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.5rem', marginTop: '0.5rem' }}>
-          <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '8px' }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>INGRESOS</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{stats.in}</div>
-          </div>
-          <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '8px' }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>EGRESOS</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{stats.out}</div>
-          </div>
-          <div style={{ background: 'rgba(255,255,255,0.05)', padding: '0.5rem', borderRadius: '8px', gridColumn: 'span 2' }}>
-            <div style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>VALES EMITIDOS</div>
-            <div style={{ fontSize: '1.25rem', fontWeight: 'bold' }}>{stats.vales}</div>
-          </div>
-        </div>
-      </div>
-
-      <div className="panel-card">
-        <h3 className="panel-card-title"><CheckCircle size={16} /> Estado de registro</h3>
-        <p className="placeholder-text">Registro manual activo.</p>
-      </div>
-
-      {/* ✅ Novedades RRHH (Local + Fecha, válido para ambos turnos) */}
-      {hrNotices !== undefined && (
-        <div className="panel-card">
-          <h3 className="panel-card-title">
-            <FileText size={16} />
-            Novedades RRHH
-          </h3>
-
-          {hrNotices.length === 0 ? (
-            <p className="placeholder-text">Sin novedades para hoy.</p>
-          ) : (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
-              {hrNotices.map((n: any) => (
-                <div
-                  key={n.id}
-                  style={{
-                    padding: '0.5rem 0.75rem',
-                    borderRadius: '8px',
-                    background:
-                      n.severity === 'URGENT'
-                        ? 'rgba(239,68,68,0.15)'
-                        : n.severity === 'WARN'
-                          ? 'rgba(245,158,11,0.15)'
-                          : 'rgba(255,255,255,0.05)',
-                    border: '1px solid var(--border-color)'
-                  }}
-                >
-                  <div style={{ fontWeight: 700, fontSize: '0.85rem' }}>
-                    {n.title}
-                  </div>
-                  <div style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>
-                    {n.message}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-    </>
-  ), [stats, hrNotices]);
-
-  const { setSidePanel } = useContext(SidePanelContext);
-
-  useEffect(() => {
-    setSidePanel(renderSidePanel);
-    return () => setSidePanel(null);
-  }, [renderSidePanel, setSidePanel]);
 
   // Estados de carga
   if (activeShift === undefined) {
@@ -516,7 +475,7 @@ export const ShiftConsole: React.FC = () => {
               />
             </div>
 
-            {filteredStaff.length > 0 && (
+            {(filteredStaff.length > 0 || globalFiltered.length > 0 || globalStaffLoading) && (
               <div style={{
                 position: 'absolute',
                 top: '100%',
@@ -526,13 +485,77 @@ export const ShiftConsole: React.FC = () => {
                 border: '1px solid var(--border-color)',
                 borderRadius: '0 0 8px 8px',
                 zIndex: 10,
-                maxHeight: '200px',
+                maxHeight: '260px',
                 overflowY: 'auto',
                 boxShadow: '0 10px 15px -3px rgba(0,0,0,0.5)'
               }}>
-                {filteredStaff.map(s => (
+                {/* LOCAL */}
+                {filteredStaff.length > 0 && (
+                  <>
+                    <div style={{
+                      padding: '0.45rem 1rem',
+                      fontSize: '0.75rem',
+                      color: 'var(--color-text-muted)',
+                      borderBottom: '1px solid rgba(255,255,255,0.06)',
+                      background: 'rgba(255,255,255,0.02)'
+                    }}>
+                      Personal del local
+                    </div>
+
+                    {filteredStaff.map(s => (
+                      <div
+                        key={`local-${s.id}`}
+                        style={{
+                          padding: '0.75rem 1rem',
+                          cursor: 'pointer',
+                          borderBottom: '1px solid rgba(255,255,255,0.05)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          gap: '0.5rem'
+                        }}
+                        className="hover:bg-slate-700"
+                        onClick={() => { setSelectedStaff(s); setSearchTerm(''); }}
+                      >
+                        <User size={16} />
+                        <span>{s.full_name}</span>
+                        {s.blacklisted ? (
+                          <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: '#f87171' }}>LISTA NEGRA</span>
+                        ) : (
+                          <span style={{ marginLeft: 'auto', fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>
+                            {s.doc ?? ''}
+                          </span>
+                        )}
+                      </div>
+                    ))}
+                  </>
+                )}
+
+                {/* GLOBAL */}
+                <div style={{
+                  padding: '0.45rem 1rem',
+                  fontSize: '0.75rem',
+                  color: 'var(--color-text-muted)',
+                  borderBottom: '1px solid rgba(255,255,255,0.06)',
+                  background: 'rgba(255,255,255,0.02)'
+                }}>
+                  Empresa (búsqueda global){globalStaffLoading ? ' — buscando…' : ''}
+                </div>
+
+                {globalStaffLoading && globalFiltered.length === 0 && (
+                  <div style={{ padding: '0.75rem 1rem', color: 'var(--color-text-muted)' }}>
+                    Buscando…
+                  </div>
+                )}
+
+                {(!globalStaffLoading && globalFiltered.length === 0) && (
+                  <div style={{ padding: '0.75rem 1rem', color: 'var(--color-text-muted)' }}>
+                    {searchTerm.trim().length >= 3 ? 'Sin resultados globales.' : 'Escribí al menos 3 letras para buscar en toda la empresa.'}
+                  </div>
+                )}
+
+                {globalFiltered.map(s => (
                   <div
-                    key={s.id}
+                    key={`global-${s.id}`}
                     style={{
                       padding: '0.75rem 1rem',
                       cursor: 'pointer',
@@ -542,7 +565,18 @@ export const ShiftConsole: React.FC = () => {
                       gap: '0.5rem'
                     }}
                     className="hover:bg-slate-700"
-                    onClick={() => { setSelectedStaff(s); setSearchTerm(''); }}
+                    onClick={async () => {
+                      setSelectedStaff(s);
+                      setSearchTerm('');
+
+                      // ✅ Cacheamos este empleado para el local (así queda disponible offline)
+                      try {
+                        const now = new Date().toISOString();
+                        await db.staff.put({ ...s, local_id: localId, is_active: true, updated_at: now });
+                      } catch (err) {
+                        if (DEBUG_MODE) console.warn('[OPS] failed to cache global staff into local cache', err);
+                      }
+                    }}
                   >
                     <User size={16} />
                     <span>{s.full_name}</span>
@@ -561,6 +595,9 @@ export const ShiftConsole: React.FC = () => {
             {staff !== undefined && staff.length === 0 && (
               <div style={{ marginTop: '0.75rem', color: 'var(--color-text-muted)', fontSize: '0.9rem' }}>
                 No hay personal asignado a este local.
+                <div style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}>
+                  Podés buscar un empleado global escribiendo al menos 3 letras.
+                </div>
               </div>
             )}
           </div>
@@ -814,7 +851,7 @@ export const ShiftConsole: React.FC = () => {
               )}
 
               {events && events.map(e => (
-                <tr key={e.id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+                <tr key={(e as any).id ?? e.client_event_id} style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
                   <td style={{ padding: '0.75rem 1rem' }}>
                     {new Date(e.event_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                   </td>
