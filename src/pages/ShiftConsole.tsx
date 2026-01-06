@@ -1,9 +1,10 @@
+// src/pages/ShiftConsole.tsx (o donde esté ubicado ShiftConsole.tsx)
 import React, { useState, useMemo, useEffect, useContext } from 'react';
 import Dexie from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ShiftEvent, type StaffMember } from '../offline/db';
 import { outboxManager } from '../offline/outbox';
-import { CASH_ADVANCE_REASONS } from '../offline/cashAdvanceReasonsMock';
+import { CASH_ADVANCE_REASONS as CASH_ADVANCE_REASONS_MOCK } from '../offline/cashAdvanceReasonsMock';
 import { SidePanelContext } from '../ui/Layout';
 import './ShiftConsole.css';
 import { validateEvent, type OpsEventPayload } from '../contracts/ops-events.v1';
@@ -73,6 +74,13 @@ type StaffApiRow = {
   blacklisted?: boolean | null;
 };
 
+type CashAdvanceReason = {
+  id?: string;
+  code: string;
+  name: string;
+  payroll_effect: 'DEDUCT' | 'INFO';
+};
+
 export const ShiftConsole: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStaff, setSelectedStaff] = useState<StaffMember | null>(null);
@@ -86,6 +94,10 @@ export const ShiftConsole: React.FC = () => {
   const [reason, setReason] = useState(''); // ausencias
   const [cashReasonCode, setCashReasonCode] = useState(''); // vales
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+
+  // ✅ Catálogo real (API) de motivos de vales
+  const [cashReasons, setCashReasons] = useState<CashAdvanceReason[]>([]);
+  const [cashReasonsLoading, setCashReasonsLoading] = useState(false);
 
   const deviceId = useMemo(() => getOrCreateDeviceId(), []);
 
@@ -163,6 +175,43 @@ export const ShiftConsole: React.FC = () => {
 
     return () => { alive = false; };
   }, [localId]);
+
+  // ✅ Catálogo: motivos de vales (API real en PROD, fallback a mock solo en DEV)
+  useEffect(() => {
+    let alive = true;
+
+    const loadCashReasons = async () => {
+      setCashReasonsLoading(true);
+      try {
+        const rows = await apiFetch<CashAdvanceReason[]>('/catalog/cash-advance-reasons');
+        if (!alive) return;
+
+        const sorted = [...rows].sort((a, b) => a.name.localeCompare(b.name, 'es'));
+        setCashReasons(sorted);
+      } catch (err: any) {
+        if (!alive) return;
+
+        if (DEBUG_MODE) {
+          const sortedMock = [...(CASH_ADVANCE_REASONS_MOCK as any[])].sort((a, b) =>
+            String(a.name).localeCompare(String(b.name), 'es')
+          );
+          setCashReasons(sortedMock as any);
+          console.warn('[OPS] cash reasons: fallback to mock (DEV)', err);
+        } else {
+          setCashReasons([]);
+          console.error('[OPS] cash reasons: failed to load in PROD', err);
+          push({ type: 'error', title: 'Catálogo', message: 'No se pudieron cargar los motivos de vales.' });
+        }
+      } finally {
+        if (!alive) return;
+        setCashReasonsLoading(false);
+      }
+    };
+
+    void loadCashReasons();
+
+    return () => { alive = false; };
+  }, [push]);
 
   // ✅ Novedades RRHH por Local + Fecha (independiente del turno)
   const hrNotices = useLiveQuery(async () => {
@@ -601,9 +650,11 @@ export const ShiftConsole: React.FC = () => {
                   value={cashReasonCode}
                   onChange={(e) => setCashReasonCode(e.target.value)}
                 >
-                  <option value="">Seleccione motivo...</option>
-                  {CASH_ADVANCE_REASONS.map(r => (
-                    <option key={r.code} value={r.code}>
+                  <option value="">
+                    {cashReasonsLoading ? 'Cargando motivos...' : 'Seleccione motivo...'}
+                  </option>
+                  {cashReasons.map(r => (
+                    <option key={r.id ?? r.code} value={r.code}>
                       {r.name}
                     </option>
                   ))}
@@ -627,14 +678,12 @@ export const ShiftConsole: React.FC = () => {
                 </div>
 
                 {cashReasonCode && (() => {
-                  const r = CASH_ADVANCE_REASONS.find(x => x.code === cashReasonCode);
+                  const r = cashReasons.find(x => x.code === cashReasonCode);
                   if (!r) return null;
                   const msg =
                     r.payroll_effect === 'DEDUCT'
                       ? 'Este vale se descontará del salario.'
-                      : r.payroll_effect === 'NONE'
-                        ? 'Este vale NO se descuenta del salario.'
-                        : 'Registro informativo (sin descuento).';
+                      : 'Registro informativo (sin descuento).';
                   return (
                     <div style={{
                       fontSize: '0.85rem',
@@ -707,7 +756,7 @@ export const ShiftConsole: React.FC = () => {
                       return;
                     }
 
-                    const r = CASH_ADVANCE_REASONS.find(x => x.code === cashReasonCode);
+                    const r = cashReasons.find(x => x.code === cashReasonCode);
                     if (!r) {
                       setErrorMsg('Motivo de vale inválido.');
                       return;
@@ -776,7 +825,7 @@ export const ShiftConsole: React.FC = () => {
                     </span>
                   </td>
                   <td style={{ padding: '0.75rem 1rem', color: 'var(--color-text-muted)', maxWidth: '220px', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {(typeof e.amount === 'number') ? `$${e.amount} - ` : ''}{e.notes}
+                    {(typeof (e as any).amount === 'number') ? `$${(e as any).amount} - ` : ''}{(e as any).notes}
                   </td>
                   <td style={{ padding: '0.75rem 1rem' }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
