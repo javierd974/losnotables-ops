@@ -1,4 +1,3 @@
-
 import React, { useEffect, useState, useMemo } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db } from '../offline/db';
@@ -20,14 +19,42 @@ interface LayoutProps {
   children: React.ReactNode;
   sidePanel?: React.ReactNode;
 }
-function getAuthUser() {
+
+type AuthUser = {
+  id: string;
+  email?: string;
+  full_name?: string | null;
+};
+
+function getAuthUser(): AuthUser | null {
+  // ✅ Fuente real de OPS según tu consola: ln_user (JSON)
   try {
-    const raw = localStorage.getItem("auth"); // ⚠️ si tu key es otra, cambiala acá
-    if (!raw) return null;
-    return JSON.parse(raw)?.user ?? null;
+    const rawLnUser = localStorage.getItem('ln_user');
+    if (rawLnUser) {
+      const u = JSON.parse(rawLnUser);
+      if (u?.id) return u as AuthUser;
+      if (u?.user?.id) return u.user as AuthUser;
+    }
   } catch {
-    return null;
+    // ignore
   }
+
+  // Fallbacks por si en algún entorno cambia
+  const CANDIDATE_KEYS = ['auth', 'sd_auth', 'ln_auth', 'ops_auth', 'session'];
+  for (const key of CANDIDATE_KEYS) {
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed?.user?.id) return parsed.user as AuthUser;
+      if (parsed?.id) return parsed as AuthUser;
+      if (parsed?.auth?.user?.id) return parsed.auth.user as AuthUser;
+    } catch {
+      continue;
+    }
+  }
+
+  return null;
 }
 
 export const Layout: React.FC<LayoutProps> = ({ children, sidePanel }) => {
@@ -43,12 +70,14 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidePanel }) => {
   );
 
   const shiftId = activeShift?.id || '';
-  const authUser = getAuthUser();
-  const encargadoLabel =
-    authUser?.full_name?.trim() ||
-    authUser?.email ||
-    "—";
 
+  // ✅ Usuario real cacheado
+  const authUser = useMemo(() => getAuthUser(), []);
+
+  const encargadoLabel =
+    (authUser?.full_name && authUser.full_name.trim()) ||
+    authUser?.email ||
+    '—';
 
   const pendingCount = useLiveQuery(
     () => {

@@ -1,5 +1,5 @@
 // src/pages/OpenShift.tsx
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useParams, useLocation, useNavigate } from 'react-router-dom';
 import { Sun, Moon, Play, ArrowLeft, AlertCircle, CheckCircle, User as UserIcon } from 'lucide-react';
 import { openShift, getOpenShift } from '../offline/opsContext';
@@ -12,8 +12,20 @@ type AuthUser = {
 };
 
 function getAuthUser(): AuthUser | null {
-  // ✅ Robusto: busca en varias keys y formatos (evita “no hay usuario” por desalineación)
-  const CANDIDATE_KEYS = ['auth', 'sd_auth', 'ln_auth', 'ops_auth', 'session', 'token'];
+  // ✅ Tu app guarda user real acá
+  const rawUser = localStorage.getItem('ln_user');
+  if (rawUser) {
+    try {
+      const u = JSON.parse(rawUser);
+      if (u?.id) return u as AuthUser;
+      if (u?.user?.id) return u.user as AuthUser;
+    } catch {
+      // ignore
+    }
+  }
+
+  // Fallbacks
+  const CANDIDATE_KEYS = ['auth', 'sd_auth', 'ln_auth', 'ops_auth', 'session'];
 
   for (const key of CANDIDATE_KEYS) {
     const raw = localStorage.getItem(key);
@@ -21,19 +33,12 @@ function getAuthUser(): AuthUser | null {
 
     try {
       const parsed = JSON.parse(raw);
-
-      // Caso A: { user: {...}, access_token: ... }
       const u = parsed?.user;
       if (u?.id) return u as AuthUser;
-
-      // Caso B: { id, email, full_name } directamente
       if (parsed?.id) return parsed as AuthUser;
-
-      // Caso C: { auth: { user: ... } }
       const u2 = parsed?.auth?.user;
       if (u2?.id) return u2 as AuthUser;
     } catch {
-      // token string u otro formato no JSON => no podemos sacar actor id
       continue;
     }
   }
@@ -52,7 +57,32 @@ export const OpenShift: React.FC = () => {
   const [error, setError] = useState<string | null>(null);
   const [existingShift, setExistingShift] = useState<any>(null);
 
-  const authUser = useMemo(() => getAuthUser(), []);
+  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+
+  // Load auth user once on mount
+  useEffect(() => {
+    setAuthUser(getAuthUser());
+  }, []);
+
+  // (Opcional) diagnóstico, lo podés borrar luego
+  useEffect(() => {
+    const keys = Object.keys(localStorage);
+    console.log('[OPS][AUTH DEBUG] localStorage keys:', keys);
+
+    const dump: Record<string, any> = {};
+    for (const k of keys) {
+      const v = localStorage.getItem(k);
+      if (!v) continue;
+      if (!/auth|token|session|user|ln_/i.test(k)) continue;
+
+      try {
+        dump[k] = JSON.parse(v);
+      } catch {
+        dump[k] = v;
+      }
+    }
+    console.log('[OPS][AUTH DEBUG] auth candidates:', dump);
+  }, []);
 
   useEffect(() => {
     const checkExisting = async () => {
@@ -74,8 +104,8 @@ export const OpenShift: React.FC = () => {
     try {
       if (!localId) throw new Error('ID de local no válido');
 
-      // ✅ Validación fuerte: sin user real no abrimos turno
-      if (!authUser?.id) {
+      const u = authUser ?? getAuthUser(); // doble check por si cambió
+      if (!u?.id) {
         throw new Error('No hay usuario autenticado. Volvé a iniciar sesión.');
       }
 
@@ -95,27 +125,6 @@ export const OpenShift: React.FC = () => {
     (authUser?.full_name && String(authUser.full_name).trim()) ||
     authUser?.email ||
     '—';
-    useEffect(() => {
-    const keys = Object.keys(localStorage);
-    console.log('[OPS][AUTH DEBUG] localStorage keys:', keys);
-
-    const dump: Record<string, any> = {};
-    for (const k of keys) {
-        const v = localStorage.getItem(k);
-        if (!v) continue;
-
-        // Solo mostramos cosas que podrían ser auth (para no llenar la consola)
-        if (!/auth|token|session|user/i.test(k)) continue;
-
-        try {
-        dump[k] = JSON.parse(v);
-        } catch {
-        dump[k] = v; // string token probablemente
-        }
-    }
-
-    console.log('[OPS][AUTH DEBUG] auth candidates:', dump);
-    }, []);
 
   return (
     <div className="selection-container">
@@ -130,7 +139,6 @@ export const OpenShift: React.FC = () => {
       <h1 className="selection-title">{existingShift ? 'Turno en curso' : 'Abrir Turno'}</h1>
       <h2 className="selection-subtitle">{localName}</h2>
 
-      {/* ✅ Indicador visual del usuario detectado (útil para debug y operación) */}
       <div
         style={{
           marginTop: '0.75rem',

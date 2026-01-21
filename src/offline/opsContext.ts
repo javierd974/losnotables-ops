@@ -14,6 +14,7 @@ export function getWorkDateAR(): string {
 
 /**
  * AUTH: read logged-in user (real)
+ * ✅ En tu app: ln_user (JSON) y ln_access_token (string)
  */
 type AuthUser = {
   id: string;
@@ -22,14 +23,24 @@ type AuthUser = {
 };
 
 function getAuthUser(): AuthUser | null {
-  const CANDIDATE_KEYS = [
-    'auth',
-    'sd_auth',
-    'ln_auth',
-    'ops_auth',
-    'token',          // a veces guardan el token ahí
-    'session',
-  ];
+  // ✅ 1) Fuente real (según tu consola)
+  const rawLnUser = localStorage.getItem('ln_user');
+  if (rawLnUser) {
+    try {
+      const u = JSON.parse(rawLnUser);
+
+      // ln_user puede ser el user directo
+      if (u?.id) return u as AuthUser;
+
+      // o puede venir como { user: {...} }
+      if (u?.user?.id) return u.user as AuthUser;
+    } catch {
+      // ignore
+    }
+  }
+
+  // ✅ 2) Fallbacks por si en algún entorno guardás distinto
+  const CANDIDATE_KEYS = ['auth', 'sd_auth', 'ln_auth', 'ops_auth', 'session'];
 
   for (const key of CANDIDATE_KEYS) {
     const raw = localStorage.getItem(key);
@@ -38,28 +49,21 @@ function getAuthUser(): AuthUser | null {
     try {
       const parsed = JSON.parse(raw);
 
-      // Caso A: { user: {...}, access_token: ... }
       const u = parsed?.user;
       if (u?.id) return u as AuthUser;
 
-      // Caso B: { id, email, full_name } directamente
       if (parsed?.id) return parsed as AuthUser;
 
-      // Caso C: { auth: { user: ... } }
       const u2 = parsed?.auth?.user;
       if (u2?.id) return u2 as AuthUser;
-
-      // Caso D: string token => no sirve para actor (no hay id)
-      // lo ignoramos
     } catch {
-      // Si no es JSON, ignorar (podría ser token string)
       continue;
     }
   }
 
+  // Nota: ln_access_token es string => no sirve para identificar actor
   return null;
 }
-
 
 /**
  * Gets the current active shift (OPEN status)
@@ -131,7 +135,6 @@ export async function openShift(
     opened_by: openedByLabel,
 
     // ✅ ID real del usuario (recomendado para auditoría)
-    // Si ShiftMeta no lo tiene, agregalo como optional.
     opened_by_user_id: authUser.id,
   };
 
