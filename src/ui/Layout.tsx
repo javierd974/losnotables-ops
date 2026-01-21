@@ -20,6 +20,15 @@ interface LayoutProps {
   children: React.ReactNode;
   sidePanel?: React.ReactNode;
 }
+function getAuthUser() {
+  try {
+    const raw = localStorage.getItem("auth"); // ⚠️ si tu key es otra, cambiala acá
+    if (!raw) return null;
+    return JSON.parse(raw)?.user ?? null;
+  } catch {
+    return null;
+  }
+}
 
 export const Layout: React.FC<LayoutProps> = ({ children, sidePanel }) => {
   const navigate = useNavigate();
@@ -34,6 +43,12 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidePanel }) => {
   );
 
   const shiftId = activeShift?.id || '';
+  const authUser = getAuthUser();
+  const encargadoLabel =
+    authUser?.full_name?.trim() ||
+    authUser?.email ||
+    "—";
+
 
   const pendingCount = useLiveQuery(
     () => {
@@ -203,7 +218,7 @@ export const Layout: React.FC<LayoutProps> = ({ children, sidePanel }) => {
 
           <div className="info-item" style={{ borderLeft: '1px solid var(--border-color)', paddingLeft: '1rem' }}>
             <span className="info-label">Encargado</span>
-            <span className="info-value">{activeShift?.opened_by || 'Admin Demo'}</span>
+            <span className="info-value">{encargadoLabel}</span>
           </div>
         </div>
       </header>

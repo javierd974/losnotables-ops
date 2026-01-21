@@ -28,6 +28,7 @@ export interface ShiftMeta {
   closed_at?: string;
   opened_by?: string;
   data?: any;
+  opened_by_user_id?: string | null;
 }
 
 export interface StaffSnapshot {
