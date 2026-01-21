@@ -11,6 +11,7 @@ import {
 import { NavLink, useNavigate } from 'react-router-dom';
 import './Layout.css';
 
+
 export const SidePanelContext = React.createContext<{
   setSidePanel: (content: React.ReactNode) => void;
 }>({ setSidePanel: () => { } });
