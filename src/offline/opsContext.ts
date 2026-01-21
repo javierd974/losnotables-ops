@@ -17,21 +17,49 @@ export function getWorkDateAR(): string {
  */
 type AuthUser = {
   id: string;
-  email: string;
+  email?: string;
   full_name?: string | null;
 };
 
 function getAuthUser(): AuthUser | null {
-  try {
-    // ⚠️ Si tu app guarda auth en otra key, cambiala acá
-    const raw = localStorage.getItem('auth');
-    if (!raw) return null;
-    const parsed = JSON.parse(raw);
-    return parsed?.user ?? null;
-  } catch {
-    return null;
+  const CANDIDATE_KEYS = [
+    'auth',
+    'sd_auth',
+    'ln_auth',
+    'ops_auth',
+    'token',          // a veces guardan el token ahí
+    'session',
+  ];
+
+  for (const key of CANDIDATE_KEYS) {
+    const raw = localStorage.getItem(key);
+    if (!raw) continue;
+
+    try {
+      const parsed = JSON.parse(raw);
+
+      // Caso A: { user: {...}, access_token: ... }
+      const u = parsed?.user;
+      if (u?.id) return u as AuthUser;
+
+      // Caso B: { id, email, full_name } directamente
+      if (parsed?.id) return parsed as AuthUser;
+
+      // Caso C: { auth: { user: ... } }
+      const u2 = parsed?.auth?.user;
+      if (u2?.id) return u2 as AuthUser;
+
+      // Caso D: string token => no sirve para actor (no hay id)
+      // lo ignoramos
+    } catch {
+      // Si no es JSON, ignorar (podría ser token string)
+      continue;
+    }
   }
+
+  return null;
 }
+
 
 /**
  * Gets the current active shift (OPEN status)
