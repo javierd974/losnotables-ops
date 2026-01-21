@@ -1,7 +1,9 @@
 // src/api/client.ts
 import { getToken, clearAuth } from "../auth/auth";
 
-const API_BASE = "https://api.losnotables.cloud";
+const API_BASE =
+  (import.meta as any).env?.VITE_API_BASE_URL?.toString() ||
+  "https://api.losnotables.cloud";
 
 export class ApiError extends Error {
   status: number;
@@ -29,7 +31,6 @@ export async function apiFetch<T>(
   const headers = new Headers(options.headers || {});
   headers.set("Accept", "application/json");
 
-  // Si mandamos body JSON y no seteó content-type
   if (options.body && !(options.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
   }
@@ -41,9 +42,12 @@ export async function apiFetch<T>(
 
   const res = await fetch(url, { ...options, headers, cache: "no-store" });
 
-  // Si el token expiró o no es válido, limpiamos auth (evita loops raros)
   if (res.status === 401) {
     clearAuth();
+  }
+
+  if (res.status === 204) {
+    return undefined as unknown as T;
   }
 
   const contentType = res.headers.get("content-type") || "";
@@ -57,7 +61,6 @@ export async function apiFetch<T>(
       payload = null;
     }
   } else {
-    // si backend devolvió texto
     try {
       payload = await res.text();
     } catch {

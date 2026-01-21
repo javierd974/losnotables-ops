@@ -4,7 +4,6 @@ import Dexie from 'dexie';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { db, type ShiftEvent, type StaffMember } from '../offline/db';
 import { outboxManager } from '../offline/outbox';
-import { CASH_ADVANCE_REASONS as CASH_ADVANCE_REASONS_MOCK } from '../offline/cashAdvanceReasonsMock';
 import './ShiftConsole.css';
 import { validateEvent, type OpsEventPayload } from '../contracts/ops-events.v1';
 import {
@@ -16,7 +15,7 @@ import { v4 as uuidv4 } from 'uuid';
 import { useToast } from '../ui/toast/ToastContext';
 import { apiFetch } from '../api/client';
 
-const APP_VERSION = '1.0.0-mvp';
+const APP_VERSION = (import.meta as any).env?.VITE_APP_VERSION || 'mvp';
 const DEBUG_MODE = import.meta.env.DEV;
 
 const getOrCreateDeviceId = (): string => {
@@ -27,6 +26,28 @@ const getOrCreateDeviceId = (): string => {
   }
   return devId;
 };
+
+// ─────────────────────────────────────────────────────────────
+// AUTH: obtener usuario real autenticado (sin mocks)
+// ─────────────────────────────────────────────────────────────
+type AuthUser = {
+  id: string;
+  email: string;
+  full_name?: string | null;
+  role?: string;
+};
+
+function getAuthUser(): AuthUser | null {
+  try {
+    // ⚠️ Ajustá esta key si tu proyecto usa otra (ej: "sd_auth", "ln_auth", etc.)
+    const raw = localStorage.getItem('auth');
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    return parsed?.user ?? null;
+  } catch {
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────
 // Reglas de negocio mínimas para asistencia (producción)
@@ -106,7 +127,7 @@ export const ShiftConsole: React.FC = () => {
   const [cashReasonCode, setCashReasonCode] = useState(''); // vales
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
-  // ✅ Catálogo real (API) de motivos de vales
+  // ✅ Catálogo real (API) de motivos de vales (SIN mock)
   const [cashReasons, setCashReasons] = useState<CashAdvanceReason[]>([]);
   const [cashReasonsLoading, setCashReasonsLoading] = useState(false);
 
@@ -115,6 +136,9 @@ export const ShiftConsole: React.FC = () => {
   const [globalStaffLoading, setGlobalStaffLoading] = useState(false);
 
   const deviceId = useMemo(() => getOrCreateDeviceId(), []);
+
+  // ✅ Usuario autenticado real
+  const authUser = useMemo(() => getAuthUser(), []);
 
   // Turno activo
   const activeShift = useLiveQuery(
@@ -157,7 +181,6 @@ export const ShiftConsole: React.FC = () => {
         const mapped: StaffMember[] = rows.map(r => mapStaffRowToMember(r, localId, now));
 
         await db.transaction('rw', db.staff, async () => {
-          // Traigo lo existente del local para desactivar los que ya no vienen
           const existing = await db.staff.where('local_id').equals(localId).toArray();
           const incomingIds = new Set(mapped.map(x => x.id));
 
@@ -216,7 +239,7 @@ export const ShiftConsole: React.FC = () => {
     };
   }, [searchTerm, localId]);
 
-  // ✅ Catálogo: motivos de vales (API real en PROD, fallback a mock solo en DEV)
+  // ✅ Catálogo: motivos de vales (API real SIEMPRE)
   useEffect(() => {
     let alive = true;
 
@@ -231,17 +254,9 @@ export const ShiftConsole: React.FC = () => {
       } catch (err: any) {
         if (!alive) return;
 
-        if (DEBUG_MODE) {
-          const sortedMock = [...(CASH_ADVANCE_REASONS_MOCK as any[])].sort((a, b) =>
-            String(a.name).localeCompare(String(b.name), 'es')
-          );
-          setCashReasons(sortedMock as any);
-          console.warn('[OPS] cash reasons: fallback to mock (DEV)', err);
-        } else {
-          setCashReasons([]);
-          console.error('[OPS] cash reasons: failed to load in PROD', err);
-          push({ type: 'error', title: 'Catálogo', message: 'No se pudieron cargar los motivos de vales.' });
-        }
+        setCashReasons([]);
+        console.error('[OPS] cash reasons: failed to load', err);
+        push({ type: 'error', title: 'Catálogo', message: 'No se pudieron cargar los motivos de vales.' });
       } finally {
         if (!alive) return;
         setCashReasonsLoading(false);
@@ -286,15 +301,6 @@ export const ShiftConsole: React.FC = () => {
       .slice(0, 30);
   }, [globalStaff, filteredStaff, searchTerm]);
 
-  /*const stats = useMemo(() => {
-    if (!shiftId || events === undefined) return { in: 0, out: 0, vales: 0 };
-    return {
-      in: events.filter(e => e.type === 'ATTENDANCE_IN').length,
-      out: events.filter(e => e.type === 'ATTENDANCE_OUT').length,
-      vales: events.filter(e => e.type === 'CASH_ADVANCE').length,
-    };
-  }, [shiftId, events]);*/
-
   const resetAfterSuccess = () => {
     setSearchTerm('');
     setSelectedStaff(null);
@@ -312,6 +318,12 @@ export const ShiftConsole: React.FC = () => {
 
     if (!activeShift?.id) {
       push({ type: 'warning', title: 'Turno', message: 'No hay turno abierto.' });
+      return;
+    }
+
+    // ✅ Sin usuario autenticado, NO permitimos registrar nada
+    if (!authUser?.id) {
+      push({ type: 'error', title: 'Sesión', message: 'No hay usuario autenticado. Volvé a iniciar sesión.' });
       return;
     }
 
@@ -336,6 +348,12 @@ export const ShiftConsole: React.FC = () => {
       created_at: now,
       device_id: deviceId,
       app_version: APP_VERSION,
+
+      // ✅ ACTOR REAL (encargado logueado)
+      actor_user_id: authUser.id,
+      actor_email: authUser.email,
+      actor_name: authUser.full_name ?? undefined,
+
       ...data,
     };
 
@@ -363,7 +381,12 @@ export const ShiftConsole: React.FC = () => {
       };
 
       if (DEBUG_MODE) {
-        console.debug('[OPS] save event', { type, shift_id: activeShift.id, employee_id: selectedStaff.id });
+        console.debug('[OPS] save event', {
+          type,
+          shift_id: activeShift.id,
+          employee_id: selectedStaff.id,
+          actor_user_id: authUser.id
+        });
       }
 
       await db.transaction('rw', db.events, db.outbox, async () => {
