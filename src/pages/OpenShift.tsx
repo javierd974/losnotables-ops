@@ -95,6 +95,27 @@ export const OpenShift: React.FC = () => {
     (authUser?.full_name && String(authUser.full_name).trim()) ||
     authUser?.email ||
     '—';
+    useEffect(() => {
+    const keys = Object.keys(localStorage);
+    console.log('[OPS][AUTH DEBUG] localStorage keys:', keys);
+
+    const dump: Record<string, any> = {};
+    for (const k of keys) {
+        const v = localStorage.getItem(k);
+        if (!v) continue;
+
+        // Solo mostramos cosas que podrían ser auth (para no llenar la consola)
+        if (!/auth|token|session|user/i.test(k)) continue;
+
+        try {
+        dump[k] = JSON.parse(v);
+        } catch {
+        dump[k] = v; // string token probablemente
+        }
+    }
+
+    console.log('[OPS][AUTH DEBUG] auth candidates:', dump);
+    }, []);
 
   return (
     <div className="selection-container">
